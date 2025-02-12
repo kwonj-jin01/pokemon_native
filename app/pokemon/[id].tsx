@@ -3,54 +3,228 @@ import { router, useLocalSearchParams } from "expo-router";
 import { RootView } from "@/components/RootView";
 import { Row } from "@/components/Row";
 import { ThemedText } from "@/components/ThemedText";
-import { useFetchQuery } from "@/hooks/useFetchQuery";
+import { useFetchQuery, usePokemonFlavorText } from "@/hooks/useFetchQuery";
 import { Colors } from "@/constants/Colors";
 import { useThemeColors } from "@/hooks/useThemeColors";
-import { getPokemonArtwork } from "@/functions/pokemons";
+import { Audio } from "expo-av";
+import { basePokemonStats, formatWeight, getPokemonArtwork } from "@/functions/pokemons";
 import { Card } from "@/components/Card";
+import { PokemonType } from "@/components/pokemon/PokemonType";
+import { PokemonSpec } from "@/components/pokemon/PokumonSpec";
+import { PokemonStat } from "@/components/pokemon/PokemonStat";
+import PagerView from "react-native-pager-view";
+import { useRef, useState } from "react";
+
 
 export default function Pokemon() {
-  const colors = useThemeColors();
   const params = useLocalSearchParams() as { id: string };
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const { data: pokemon } = useFetchQuery("/pokemon/[id]", { id });
-  const mainType = pokemon?.types?.[0]?.type?.name as keyof typeof Colors.type;
-  const colorType = mainType ? Colors.type[mainType] : colors.tint;
+  const [id, setId] = useState(parseInt(params.id, 10));
+  const offset = useRef(0);
+  const pager = useRef<PagerView>(null);
+
+  const onPageSelected = (e: { nativeEvent: { position: number } }) => {
+    offset.current = e.nativeEvent.position - 1;
+  };
+
+  const onPageScrollStateChanged = (e: { nativeEvent: { pageScrollState: string } }) => {
+    if (e.nativeEvent.pageScrollState !== "idle") return;
+
+    if ((offset.current === -1 && id === 1) || (offset.current === 1 && id === 151)) {
+      offset.current = 0;
+      return;
+    }
+
+    if (offset.current !== 0) {
+      setId((prevId) => Math.max(1, Math.min(prevId + offset.current, 151)));
+      offset.current = 0;
+      pager.current?.setPageWithoutAnimation(1);
+    }
+  };
+
+  const onNext = () => {
+    if (id < 151) pager.current?.setPage(2);
+  };
+
+  const onPrevious = () => {
+    if (id > 1) pager.current?.setPage(0);
+  };
 
   return (
-    <RootView style={{ backgroundColor: colorType }}>
+    <PagerView
+      ref={pager}
+      onPageSelected={onPageSelected}
+      onPageScrollStateChanged={onPageScrollStateChanged}
+      initialPage={1}
+      style={{ flex: 1 }}
+    >
+      <PokemonView key={id - 1} id={id - 1} onNext={onNext} onPrevious={onPrevious} />
+      <PokemonView key={id} id={id} onNext={onNext} onPrevious={onPrevious} />
+      <PokemonView key={id + 1} id={id + 1} onNext={onNext} onPrevious={onPrevious} />
+    </PagerView>
+  );
+}
+
+
+type Props = {
+  id: number,
+  onPrevious: () => void,
+  onNext: () => void,
+}
+
+function PokemonView({ id, onNext, onPrevious }: Props) {
+  const colors = useThemeColors();
+  // const params = useLocalSearchParams() as { id: string };
+  // const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { data: pokemon } = useFetchQuery("/pokemon/[id]", { id: id });
+  const PokemonFlavorText = ({ pokemonId }: { pokemonId: number }) => {
+    const { data: flavorText } = usePokemonFlavorText(pokemonId);
+    return <ThemedText>{flavorText}</ThemedText>;
+  };
+
+  const mainType = pokemon?.types?.[0]?.type?.name as keyof typeof Colors.type;
+  const colorType = mainType ? Colors.type[mainType] : colors.tint;
+  const types = pokemon?.types ?? [];
+  const stats = pokemon?.stats ?? basePokemonStats;
+
+  const onImagePress = async () => {
+    const cry = pokemon?.cries.latest;
+    if (!cry) {
+      return;
+    }
+    const { sound } = await Audio.Sound.createAsync(
+      {
+        uri: cry,
+      },
+      { shouldPlay: true },
+    );
+    sound.playAsync();
+
+  }
+
+
+  const isFirst = id === 1;
+  const isLast = id === 151;
+  return (
+    <RootView backgroundcolor={colorType}>
       <View>
-        <Image style={styles.pokeball} source={require("@/assets/images/pokeball_big.png")}
+        <Image
+          style={styles.pokeball}
+          source={require("@/assets/images/pokeball_big.png")}
           width={208}
-          height={208} />
+          height={208}
+        />
         <Row style={styles.header}>
-          <Row gap={8}>
-            <Pressable onPress={router.back}>
+          <Pressable onPress={router.back}>
+            <Row gap={8}>
               <Image
                 source={require("@/assets/images/back.png")}
-                width={200}
-                height={20}
+                width={32}
+                height={32}
               />
-            </Pressable>
-            <ThemedText color="grayWhite" variant="headline" style={{textTransform: "capitalize"}}>
-              {pokemon?.name}
-            </ThemedText>
-          </Row>
-          <View style={styles.body}>
-            <Image style={styles.artwork}
-              source={{
-                uri: getPokemonArtwork(id)
-              }}
-              width={200}
-              height={200}
-            />
-            <Card style={styles.card}>
-              <ThemedText>Bonjour les gens</ThemedText>
-            </Card>
-          </View>
+              <ThemedText
+                color="grayWhite"
+                variant="headline"
+                style={{ textTransform: "capitalize" }}
+              >
+                {pokemon?.name}
+              </ThemedText>
+
+            </Row>
+          </Pressable>
+          <ThemedText color="grayWhite" variant="subtitle2" style={{ textTransform: "capitalize" }} >
+            #{id.toString().padStart(3, "0")}
+          </ThemedText>
         </Row>
 
-        <Text>Pokemon {params.id}</Text>
+
+        <Card style={[styles.card, { overflow: "visible" }]}>
+          <Row style={styles.imageRow}>
+            {isFirst ? (
+              <View style={{ width: 24, height: 24 }}></View>
+            ) : (
+              <Pressable onPress={onImagePress}>
+                <Image
+                  source={
+                    require("@/assets/images/prev.png")
+                  }
+                  width={24}
+                  height={24}
+                />
+              </Pressable>
+            )}
+            <Pressable onPress={onPrevious}>
+
+              <Image
+                style={styles.artwork}
+                source={{
+                  uri: getPokemonArtwork(id)
+                }}
+                width={200}
+                height={200}
+              />
+            </Pressable>
+            {isLast ? (
+              <View style={{ width: 24, height: 24 }}></View>
+            ) : (
+              <Pressable onPress={onNext}>
+                <Image
+                  source={
+                    require("@/assets/images/next.png")
+                  }
+                  width={24}
+                  height={24}
+                />
+              </Pressable>
+            )}
+          </Row>
+          <Row gap={16} style={{ height: 20 }}>
+            {types.map((type) => (
+              <PokemonType name={type.type.name as keyof typeof Colors.type} key={type.type.name.toString()} />
+            ))}
+          </Row>
+          <ThemedText variant="subtitle1" style={{ color: colorType }}>
+            About
+          </ThemedText>
+          <Row>
+            <PokemonSpec
+              style={{ borderStyle: 'solid', borderRightWidth: 1, borderColor: colors.grayLight }}
+              title={formatWeight(pokemon?.weight)}
+              description="Weight"
+              image={require("@/assets/images/weight.png")}
+            />
+            <PokemonSpec
+              style={{ borderStyle: 'solid', borderRightWidth: 1, borderColor: colors.grayLight }}
+              title={formatWeight(pokemon?.height)}
+              description="Size"
+              image={require("@/assets/images/size.png")}
+            />
+            <PokemonSpec
+              title={pokemon?.moves
+                .slice(0, 2)
+                .map((m) => m.move.name)
+                .join("\n")}
+              description="Moves"
+            />
+          </Row>
+
+          {/* <PokemonFlavorText pokemonId={parseInt(id)} /> */}
+
+          {/* stats */}
+          <ThemedText variant="subtitle1" style={{ color: colorType }}>
+            base Stats
+          </ThemedText>
+
+          <View style={{ alignSelf: "stretch" }}>
+            {stats.map((stat) => (
+              <PokemonStat
+                key={stat.stat.name}
+                name={stat.stat.name}
+                value={stat.base_stat}
+                color={colorType}
+              />
+            ))}
+          </View>
+        </Card>
       </View>
     </RootView>
   );
@@ -63,21 +237,26 @@ const styles = StyleSheet.create({
   },
   pokeball: {
     position: 'absolute',
-    opacity: 1,
     right: 8,
     top: 8,
   },
-  artwork: {
-    position: "absolute",
+  imageRow: {
+    position: 'absolute',
     top: -140,
-    alignSelf: "center",
     zIndex: 2,
+    justifyContent: "space-between",
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
   },
-  body: {
-    marginTop: 144,
+  artwork: {
   },
   card: {
+    marginTop: 144,
     paddingHorizontal: 20,
-    paddingTop: 60
+    paddingTop: 60,
+    paddingBottom: 20,
+    gap: 16,
+    alignItems: "center"
   }
 });
